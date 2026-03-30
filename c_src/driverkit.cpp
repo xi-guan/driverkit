@@ -177,13 +177,18 @@ int exit_sink() {
 #endif
 
 void fire_listener_thread() {
-    if (!listener_thread.joinable())
+    if (!listener_thread.joinable()) {
+        capture_done.store(false, std::memory_order_release);
+        capture_success.store(false, std::memory_order_release);
         listener_thread = std::thread{
         [&]() {
             listener_loop = CFRunLoopGetCurrent();
-            capture_registered_devices();
+            bool result = capture_registered_devices();
+            capture_success.store(result, std::memory_order_release);
+            capture_done.store(true, std::memory_order_release);
             CFRunLoopRun();
         } };
+    }
 }
 
 void input_callback(void* context, IOReturn result, void* sender, IOHIDValueRef value) {
@@ -468,15 +473,32 @@ extern "C" {
 
     int grab() {
         if (!registered_devices_hashes.size() && !registered_device_vidpids.size()) {
-            std::cout << "At least one device has to be registered via register_device()" << std::endl;
+            std::cerr << "At least one device has to be registered via register_device()" << std::endl;
             return 1;
         }
         if (pipe(fd) == -1) { std::cerr << "pipe error: " << errno << std::endl; return errno; }
-        // Connect output before seizing input — ensures we can emit keystrokes
-        // before taking exclusive control of the keyboard.
         int sink_err = init_sink();
-        if (sink_err) return sink_err;
+        if (sink_err) { close(fd[0]); close(fd[1]); return sink_err; }
         fire_listener_thread();
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!capture_done.load(std::memory_order_acquire)) {
+            if (std::chrono::steady_clock::now() >= deadline) {
+                std::cerr << "timed out waiting for device capture" << std::endl;
+                if(listener_thread.joinable()) { CFRunLoopStop(listener_loop); listener_thread.join(); }
+                close(fd[0]); close(fd[1]);
+                exit_sink();
+                return 4;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (!capture_success.load(std::memory_order_acquire)) {
+            std::cerr << "failed to seize any registered device" << std::endl;
+            if(listener_thread.joinable()) { CFRunLoopStop(listener_loop); listener_thread.join(); }
+            close_registered_devices();
+            close(fd[0]); close(fd[1]);
+            exit_sink();
+            return 3;
+        }
         return 0;
     }
 
@@ -586,14 +608,30 @@ extern "C" {
      * Returns true if at least one device was seized.
      */
     bool regrab_input() {
-        #ifdef USE_KEXT
+    #ifdef USE_KEXT
         return true;
-        #else
+    #else
         if (!registered_devices_hashes.size() && !registered_device_vidpids.size()) return false;
         if (pipe(fd) == -1) { std::cerr << "pipe error: " << errno << std::endl; return false; }
         fire_listener_thread();
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!capture_done.load(std::memory_order_acquire)) {
+            if (std::chrono::steady_clock::now() >= deadline) {
+                std::cerr << "timed out waiting for device capture in regrab" << std::endl;
+                if(listener_thread.joinable()) { CFRunLoopStop(listener_loop); listener_thread.join(); }
+                close(fd[0]); close(fd[1]);
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (!capture_success.load(std::memory_order_acquire)) {
+            if(listener_thread.joinable()) { CFRunLoopStop(listener_loop); listener_thread.join(); }
+            close_registered_devices();
+            close(fd[0]); close(fd[1]);
+            return false;
+        }
         return true;
-        #endif
+    #endif
     }
 
     // Virtual HID pointing device functions (DriverKit/dext only)

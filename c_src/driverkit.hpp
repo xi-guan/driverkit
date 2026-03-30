@@ -40,6 +40,8 @@
     std::atomic<bool> sink_ready{false};
     // Tracks whether the DriverKit virtual pointing device is ready for output.
     std::atomic<bool> pointing_sink_ready{false};
+    std::atomic<bool> capture_done{false};
+    std::atomic<bool> capture_success{false};
     pqrs::karabiner::driverkit::virtual_hid_device_driver::hid_report::keyboard_input keyboard;
     pqrs::karabiner::driverkit::virtual_hid_device_driver::hid_report::apple_vendor_top_case_input top_case;
     pqrs::karabiner::driverkit::virtual_hid_device_driver::hid_report::apple_vendor_keyboard_input apple_keyboard;
