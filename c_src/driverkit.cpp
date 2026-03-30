@@ -106,7 +106,11 @@ int init_sink() {
         });
 
         client->virtual_hid_keyboard_ready.connect([](auto&& ready) {
-            std::cout << "virtual_hid_keyboard_ready " << ready << std::endl;
+            static std::optional<bool> previous_value;
+            if (previous_value != ready) {
+                std::cout << "virtual_hid_keyboard_ready " << ready << std::endl;
+                previous_value = ready;
+            }
             sink_ready.store(ready, std::memory_order_release);
         });
 
