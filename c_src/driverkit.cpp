@@ -98,7 +98,7 @@ int init_sink() {
         auto copy = client;
 
         client->connected.connect([copy] {
-            std::cout << "connected" << std::endl;
+            dk_log("INFO", "driverkit: connected");
             pqrs::karabiner::driverkit::virtual_hid_device_service::virtual_hid_keyboard_parameters parameters;
             parameters.set_country_code(pqrs::hid::country_code::us);
             copy->async_virtual_hid_keyboard_initialize(parameters);
@@ -108,7 +108,7 @@ int init_sink() {
         client->virtual_hid_keyboard_ready.connect([](auto&& ready) {
             static std::optional<bool> previous_value;
             if (previous_value != ready) {
-                std::cout << "virtual_hid_keyboard_ready " << ready << std::endl;
+                dk_log("INFO", "driverkit: virtual_hid_keyboard_ready ", std::boolalpha, ready);
                 previous_value = ready;
             }
             sink_ready.store(ready, std::memory_order_release);
@@ -120,19 +120,19 @@ int init_sink() {
         });
 
         client->closed.connect([] {
-            std::cout << "closed" << std::endl;
+            dk_log("WARN", "driverkit: connection closed");
             sink_ready.store(false, std::memory_order_release);
             pointing_sink_ready.store(false, std::memory_order_release);
         });
 
         client->connect_failed.connect([](auto&& error_code) {
-            std::cout << "connect_failed " << error_code << std::endl;
+            dk_err("driverkit: connect_failed ", error_code);
             sink_ready.store(false, std::memory_order_release);
             pointing_sink_ready.store(false, std::memory_order_release);
         });
 
         client->error_occurred.connect([](auto&& error_code) {
-            std::cout << "error_occurred " << error_code << std::endl;
+            dk_err("driverkit: error_occurred ", error_code);
             sink_ready.store(false, std::memory_order_release);
             pointing_sink_ready.store(false, std::memory_order_release);
         });
@@ -140,7 +140,7 @@ int init_sink() {
         client->driver_activated.connect([](auto&& driver_activated) {
             static std::optional<bool> previous_value;
             if (previous_value != driver_activated) {
-                std::cout << "driver activated: " << std::boolalpha  << driver_activated << std::endl;
+                dk_log("INFO", "driverkit: driver activated: ", std::boolalpha, driver_activated);
                 previous_value = driver_activated;
             }
         });
@@ -148,7 +148,7 @@ int init_sink() {
         client->driver_connected.connect([](auto&& driver_connected) {
             static std::optional<bool> previous_value;
             if (previous_value != driver_connected) {
-                std::cout << "driver connected: " << driver_connected << std::endl;
+                dk_log("INFO", "driverkit: driver connected: ", std::boolalpha, driver_connected);
                 previous_value = driver_connected;
             }
         });
@@ -156,7 +156,7 @@ int init_sink() {
         client->driver_version_mismatched.connect([](auto&& driver_version_mismatched) {
             static std::optional<bool> previous_value;
             if (previous_value != driver_version_mismatched) {
-                std::cout << "driver version matched: " << !driver_version_mismatched << std::endl;
+                dk_log("INFO", "driverkit: driver version matched: ", std::boolalpha, !driver_version_mismatched);
                 previous_value = driver_version_mismatched;
             }
         });
@@ -164,7 +164,7 @@ int init_sink() {
         client->async_start();
         return 0;
     } catch (const std::exception& e) {
-        std::cerr << "Exception in init_sink: " << e.what() << std::endl;
+        dk_err("driverkit: exception in init_sink: ", e.what());
         return 1;
     }
 }
@@ -477,17 +477,17 @@ extern "C" {
 
     int grab() {
         if (!registered_devices_hashes.size() && !registered_device_vidpids.size()) {
-            std::cerr << "At least one device has to be registered via register_device()" << std::endl;
+            dk_err("at least one device has to be registered via register_device()");
             return 1;
         }
-        if (pipe(fd) == -1) { std::cerr << "pipe error: " << errno << std::endl; return errno; }
+        if (pipe(fd) == -1) { dk_err("pipe error: ", errno); return errno; }
         int sink_err = init_sink();
         if (sink_err) { close(fd[0]); close(fd[1]); return sink_err; }
         fire_listener_thread();
         auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (!capture_done.load(std::memory_order_acquire)) {
             if (std::chrono::steady_clock::now() >= deadline) {
-                std::cerr << "timed out waiting for device capture" << std::endl;
+                dk_err("timed out waiting for device capture");
                 if(listener_thread.joinable()) { CFRunLoopStop(listener_loop); listener_thread.join(); }
                 close(fd[0]); close(fd[1]);
                 exit_sink();
@@ -496,7 +496,7 @@ extern "C" {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         if (!capture_success.load(std::memory_order_acquire)) {
-            std::cerr << "failed to seize any registered device" << std::endl;
+            dk_err("failed to seize any registered device");
             if(listener_thread.joinable()) { CFRunLoopStop(listener_loop); listener_thread.join(); }
             close_registered_devices();
             close(fd[0]); close(fd[1]);
@@ -511,7 +511,7 @@ extern "C" {
      * key events to the OS.
      */
     void release() {
-        std::cout << "release called" << std::endl;
+        dk_log("INFO", "driverkit: release called");
         if(listener_thread.joinable()) { CFRunLoopStop(listener_loop); listener_thread.join(); }
         close_registered_devices();
         keyboard.keys.clear();
@@ -616,12 +616,12 @@ extern "C" {
         return true;
     #else
         if (!registered_devices_hashes.size() && !registered_device_vidpids.size()) return false;
-        if (pipe(fd) == -1) { std::cerr << "pipe error: " << errno << std::endl; return false; }
+        if (pipe(fd) == -1) { dk_err("pipe error: ", errno); return false; }
         fire_listener_thread();
         auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (!capture_done.load(std::memory_order_acquire)) {
             if (std::chrono::steady_clock::now() >= deadline) {
-                std::cerr << "timed out waiting for device capture in regrab" << std::endl;
+                dk_err("timed out waiting for device capture in regrab");
                 if(listener_thread.joinable()) { CFRunLoopStop(listener_loop); listener_thread.join(); }
                 close(fd[0]); close(fd[1]);
                 return false;

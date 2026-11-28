@@ -2,6 +2,8 @@
 #include <atomic>
 #include <thread>
 #include <iostream>
+#include <iomanip>
+#include <chrono>
 #include <mach/mach_error.h>
 #include <AvailabilityMacros.h>
 #include <filesystem> // Include this before virtual_hid_device_service.hpp to avoid compile error
@@ -122,8 +124,34 @@ io_iterator_t get_keyboards_iterator();
 IOHIDDeviceRef get_device_by_hash(uint64_t device_hash);
 
 // Helper functions...
+inline std::string log_timestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto time = std::chrono::system_clock::to_time_t(now);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+    std::tm tm{};
+    localtime_r(&time, &tm);
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d.%04d",
+        tm.tm_hour, tm.tm_min, tm.tm_sec, (int)(ms.count() * 10));
+    return buf;
+}
+
+template<typename... Args>
+inline void dk_log(const char* level, Args&&... args) {
+    std::cout << log_timestamp() << " [" << level << "] ";
+    (std::cout << ... << std::forward<Args>(args));
+    std::cout << std::endl;
+}
+
+template<typename... Args>
+inline void dk_err(Args&&... args) {
+    std::cerr << log_timestamp() << " [ERROR] ";
+    (std::cerr << ... << std::forward<Args>(args));
+    std::cerr << std::endl;
+}
+
 inline void print_iokit_error(const char* fname, int freturn, std::string data = "") {
-    std::cerr << fname << " error: " << ( freturn ? mach_error_string(freturn) : "" ) << " " << data << std::endl;
+    dk_err(fname, " error: ", (freturn ? mach_error_string(freturn) : ""), " ", data);
 }
 
 inline CFStringRef from_cstr( const char* str) {
